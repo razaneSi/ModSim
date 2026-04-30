@@ -7,6 +7,8 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 from matplotlib.patches import FancyBboxPatch
+from tp2 import mm1_metrics, calculate_probabilities, mm_s_metrics, calculate_probabilities_mm_s
+from tp3 import simulate as simulate_mm1
 
 app = Flask(__name__)
 
@@ -40,7 +42,7 @@ def compute_steady_state(P):
 
 def generate_chart(history, steps, state_names=None):
     n = len(history[0])
-    fig, ax = plt.subplots(figsize=(7.2, 3.6))
+    fig, ax = plt.subplots(figsize=(7.2, 4.0))
     fig.patch.set_alpha(0.0)
     ax.set_facecolor((13/255, 21/255, 41/255, 0.78))
 
@@ -68,15 +70,104 @@ def generate_chart(history, steps, state_names=None):
     ax.grid(axis='y', color='#1e3a5f', linewidth=0.6, alpha=0.5)
     ax.grid(axis='x', color='#1e3a5f', linewidth=0.4, alpha=0.3)
 
+    # Place legend below the chart so it never overlaps the lines
     legend = ax.legend(
-        loc='upper right', framealpha=0.15, edgecolor='#1e3a5f',
-        labelcolor='#c9deff', fontsize=9, fancybox=True
+        loc='upper center',
+        bbox_to_anchor=(0.5, -0.18),
+        ncol=min(n, 4),
+        framealpha=0.18,
+        edgecolor='#1e3a5f',
+        labelcolor='#c9deff',
+        fontsize=9,
+        fancybox=True
     )
     legend.get_frame().set_facecolor('#0d1f3c')
 
     ax.xaxis.set_major_locator(ticker.MaxNLocator(integer=True, nbins=10))
     fig.tight_layout(pad=1.5)
 
+
+    buf = io.BytesIO()
+    plt.savefig(
+        buf,
+        format='png',
+        dpi=115,
+        bbox_inches='tight',
+        transparent=True
+    )
+    buf.seek(0)
+    img_b64 = base64.b64encode(buf.read()).decode('utf-8')
+    plt.close(fig)
+    return img_b64
+
+
+def generate_probability_bar_chart(probabilities):
+    x = list(range(len(probabilities)))
+    fig, ax = plt.subplots(figsize=(7.2, 4.0))
+    fig.patch.set_alpha(0.0)
+    ax.set_facecolor((13 / 255, 21 / 255, 41 / 255, 0.78))
+
+    bars = ax.bar(x, probabilities, color='#06b6d4', edgecolor='#67e8f9', linewidth=1.0, alpha=0.9)
+    for bar in bars:
+        bar.set_linewidth(0.8)
+
+    ax.set_xlabel('n', color='#8ba3cc', fontsize=10, labelpad=8)
+    ax.set_ylabel('P(N = n)', color='#8ba3cc', fontsize=10, labelpad=8)
+    ax.tick_params(colors='#8ba3cc', labelsize=9)
+    ax.spines['bottom'].set_color('#1e3a5f')
+    ax.spines['left'].set_color('#1e3a5f')
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.grid(axis='y', color='#1e3a5f', linewidth=0.6, alpha=0.5)
+    ax.grid(axis='x', color='#1e3a5f', linewidth=0.2, alpha=0.15)
+    ax.xaxis.set_major_locator(ticker.MaxNLocator(integer=True, nbins=12))
+
+    fig.tight_layout(pad=1.4)
+    buf = io.BytesIO()
+    plt.savefig(
+        buf,
+        format='png',
+        dpi=115,
+        bbox_inches='tight',
+        transparent=True
+    )
+    buf.seek(0)
+    img_b64 = base64.b64encode(buf.read()).decode('utf-8')
+    plt.close(fig)
+    return img_b64
+
+def generate_tp3_metrics_chart(metrics):
+    labels = ['N', 'Nq', 'T', 'Tq', 'Ts', 'SU']
+    values = [float(metrics.get(k, 0.0)) for k in labels]
+
+    fig, ax = plt.subplots(figsize=(7.2, 4.0))
+    fig.patch.set_alpha(0.0)
+    ax.set_facecolor((13 / 255, 21 / 255, 41 / 255, 0.78))
+
+    bar_colors = ['#3b82f6', '#06b6d4', '#0ea5e9', '#14b8a6', '#22d3a0', '#f59e0b']
+    bars = ax.bar(labels, values, color=bar_colors, edgecolor='#c9deff', linewidth=0.6, alpha=0.92)
+
+    for bar, value in zip(bars, values):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height(),
+            f'{value:.3f}',
+            ha='center',
+            va='bottom',
+            color='#e8f0ff',
+            fontsize=9
+        )
+
+    ax.set_ylabel('Value', color='#8ba3cc', fontsize=10, labelpad=8)
+    ax.tick_params(colors='#8ba3cc', labelsize=10)
+    ax.spines['bottom'].set_color('#1e3a5f')
+    ax.spines['left'].set_color('#1e3a5f')
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.grid(axis='y', color='#1e3a5f', linewidth=0.6, alpha=0.5)
+    ax.set_ylim(0, max(values + [1.0]) * 1.2)
+
+    fig.tight_layout(pad=1.4)
     buf = io.BytesIO()
     plt.savefig(
         buf,
@@ -137,6 +228,82 @@ def simulate():
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/tp2/exercise2', methods=['POST'])
+def tp2_exercise2():
+    try:
+        data = request.get_json(silent=True) or {}
+        lamb = float(data.get('lambda'))
+        mu = float(data.get('mu'))
+        servers = int(data.get('servers'))
+        max_n = int(data.get('max_n', 12))
+        max_n = max(0, min(max_n, 60))
+
+        metrics = mm_s_metrics(lamb, mu, servers)
+        if not metrics['stable']:
+            return jsonify(metrics)
+
+        probabilities = calculate_probabilities_mm_s(lamb, mu, servers, max_n)
+        chart = generate_probability_bar_chart(probabilities)
+
+        return jsonify({
+            'metrics': metrics,
+            'probabilities': probabilities,
+            'chart': chart,
+            'max_n': max_n
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@app.route('/tp2/exercise1', methods=['POST'])
+def tp2_exercise1():
+    try:
+        data = request.get_json(silent=True) or {}
+        lamb = float(data.get('lambda'))
+        mu = float(data.get('mu'))
+        max_n = int(data.get('max_n', 12))
+        max_n = max(0, min(max_n, 60))
+
+        metrics = mm1_metrics(lamb, mu)
+        if not metrics['stable']:
+            return jsonify(metrics)
+
+        probabilities = calculate_probabilities(lamb, mu, max_n)
+        chart = generate_probability_bar_chart(probabilities)
+
+        return jsonify({
+            'metrics': metrics,
+            'probabilities': probabilities,
+            'chart': chart,
+            'max_n': max_n
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@app.route('/tp3/simulate', methods=['POST'])
+def tp3_simulate():
+    try:
+        data = request.get_json(silent=True) or {}
+        lamb = float(data.get('lambda'))
+        mu = float(data.get('mu'))
+        duration = float(data.get('duration'))
+
+        N, Nq, T, Tq, Ts, SU = simulate_mm1(lamb, mu, duration, verbose=False)
+        metrics = {
+            'N': N,
+            'Nq': Nq,
+            'T': T,
+            'Tq': Tq,
+            'Ts': Ts,
+            'SU': SU
+        }
+        chart = generate_tp3_metrics_chart(metrics)
+        return jsonify({'metrics': metrics, 'chart': chart})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
 
 @app.errorhandler(404)
 def not_found(_):
